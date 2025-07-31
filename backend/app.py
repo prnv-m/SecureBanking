@@ -164,7 +164,19 @@ def init_db():
             FOREIGN KEY (user_email) REFERENCES users (email)
         )
     ''')
-    
+    # Billers table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS billers (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        provider_name TEXT NOT NULL, -- e.g., 'KSEB', 'Airtel'
+        category TEXT NOT NULL, -- e.g., 'Electricity Bill', 'Mobile Recharge'
+        consumer_id TEXT NOT NULL, -- The user's specific account/phone number
+        nickname TEXT, -- e.g., 'Home Electricity', 'My Jio Number'
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users (id)
+    )
+    ''')
     # Stocks table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS stocks (
@@ -215,7 +227,23 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
     ''')
-    
+# In init_db() in app.py
+
+# ... after the other CREATE TABLE statements ...
+
+# AutoPay Rules table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS autopay_rules (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            biller_id TEXT NOT NULL,
+            max_amount REAL NOT NULL,
+            enabled INTEGER DEFAULT 1, -- 1 for true, 0 for false
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (biller_id) REFERENCES billers (id) ON DELETE CASCADE
+        )
+    ''')
     # Fixed Deposits table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS fixed_deposits (
@@ -670,6 +698,77 @@ def biometric_login():
         logging.error(f"General biometric login error: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
     
+@app.route('/api/billers/<string:biller_id>', methods=['DELETE'])
+@jwt_required()
+def delete_biller(biller_id):
+    user_id = get_jwt_identity()
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM billers WHERE id = ? AND user_id = ?", (biller_id, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'message': 'Biller deleted successfully.'})
+
+@app.route('/api/autopay-rules', methods=['GET'])
+@jwt_required()
+def get_autopay_rules():
+    user_id = get_jwt_identity()
+    conn = get_db()
+    cursor = conn.cursor()
+    # Join with billers to get details like nickname and provider
+    cursor.execute('''
+        SELECT ar.*, b.nickname, b.provider_name, b.consumer_id
+        FROM autopay_rules ar
+        JOIN billers b ON ar.biller_id = b.id
+        WHERE ar.user_id = ?
+    ''', (user_id,))
+    rules = cursor.fetchall()
+    conn.close()
+    return jsonify({'success': True, 'rules': [dict(row) for row in rules]})
+
+@app.route('/api/autopay-rules', methods=['POST'])
+@jwt_required()
+def add_autopay_rule():
+    user_id = get_jwt_identity()
+    data = request.get_json()
+    if 'biller_id' not in data or 'max_amount' not in data:
+        return jsonify({'success': False, 'error': 'Biller ID and max amount required'}), 400
+
+    rule_id = str(uuid.uuid4())
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO autopay_rules (id, user_id, biller_id, max_amount) VALUES (?, ?, ?, ?)",
+                   (rule_id, user_id, data['biller_id'], float(data['max_amount'])))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'message': 'Auto-Pay rule added.'})
+
+@app.route('/api/autopay-rules/<string:rule_id>', methods=['PUT'])
+@jwt_required()
+def toggle_autopay_rule(rule_id):
+    user_id = get_jwt_identity()
+    data = request.get_json()
+    if 'enabled' not in data:
+        return jsonify({'success': False, 'error': 'Enabled status required'}), 400
+        
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE autopay_rules SET enabled = ? WHERE id = ? AND user_id = ?", 
+                   (1 if data['enabled'] else 0, rule_id, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'message': 'Rule status updated.'})
+
+@app.route('/api/autopay-rules/<string:rule_id>', methods=['DELETE'])
+@jwt_required()
+def delete_autopay_rule(rule_id):
+    user_id = get_jwt_identity()
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM autopay_rules WHERE id = ? AND user_id = ?", (rule_id, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'message': 'Auto-Pay rule deleted.'})
 # Authentication routes
 @app.before_request
 def handle_preflight():
@@ -801,6 +900,107 @@ def login():
         
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/billers', methods=['GET'])
+@jwt_required()
+def get_registered_billers():
+    user_id = get_jwt_identity()
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM billers WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
+    billers = cursor.fetchall()
+    conn.close()
+    return jsonify({
+        'success': True,
+        'billers': [dict(row) for row in billers]
+    })
+
+
+@app.route('/api/billers', methods=['POST'])
+@jwt_required()
+def add_biller():
+    user_id = get_jwt_identity()
+    data = request.get_json()
+    
+    required_fields = ['provider_name', 'category', 'consumer_id', 'nickname']
+    if not all(field in data for field in required_fields):
+        return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+
+    biller_id = str(uuid.uuid4())
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO billers (id, user_id, provider_name, category, consumer_id, nickname)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (biller_id, user_id, data['provider_name'], data['category'], data['consumer_id'], data['nickname']))
+    conn.commit()
+    
+    cursor.execute("SELECT * FROM billers WHERE id = ?", (biller_id,))
+    new_biller = cursor.fetchone()
+    conn.close()
+    
+    return jsonify({
+        'success': True,
+        'message': 'Biller added successfully!',
+        'biller': dict(new_biller)
+    }), 201
+
+
+@app.route('/api/billers/pay', methods=['POST'])
+@jwt_required()
+def pay_bill():
+    user_id = get_jwt_identity()
+    data = request.get_json()
+
+    if not data or 'biller_id' not in data or 'amount' not in data:
+        return jsonify({'success': False, 'error': 'Biller ID and amount are required'}), 400
+
+    biller_id = data['biller_id']
+    amount = float(data['amount'])
+
+    if amount <= 0:
+        return jsonify({'success': False, 'error': 'Amount must be positive'}), 400
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Get user and biller details in one go
+    cursor.execute("SELECT balance, email FROM users WHERE id = ?", (user_id,))
+    user = cursor.fetchone()
+    cursor.execute("SELECT * FROM billers WHERE id = ? AND user_id = ?", (biller_id, user_id))
+    biller = cursor.fetchone()
+
+    if not biller:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Biller not found or does not belong to user'}), 404
+
+    if user['balance'] < amount:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Insufficient balance'}), 400
+
+    # 1. Create the transaction record
+    transaction_id = str(uuid.uuid4())
+    description = f"Bill payment for {biller['nickname']} ({biller['provider_name']})"
+    cursor.execute('''
+        INSERT INTO transactions (id, user_id, type, amount, description, status, completed_at, counterparty)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+    ''', (transaction_id, user_id, 'BILL_PAYMENT', amount, description, 'COMPLETED', biller['provider_name']))
+
+    # 2. Deduct amount from user's balance
+    cursor.execute("UPDATE users SET balance = balance - ? WHERE id = ?", (amount, user_id))
+    
+    conn.commit()
+    conn.close()
+
+    # Track the event
+    track_user_event(user['email'], 'bill_payment', '/bills', amount, 'BILL_PAYMENT', json.dumps({'biller_id': biller_id}))
+    
+    return jsonify({
+        'success': True,
+        'message': f'Successfully paid ₹{amount:,.2f} for {biller["nickname"]}.'
+    })
+
 
 @app.route('/api/auth/profile', methods=['GET', 'OPTIONS'])
 @jwt_required()
