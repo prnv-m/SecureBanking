@@ -503,10 +503,6 @@ Maturity Amount: ₹${fd.maturityAmount.toLocaleString('en-IN')}
                 <Eye className="h-5 w-5 mr-2 text-purple-600" />
                 My Fixed Deposits
               </div>
-              <Button variant="outline" size="sm" onClick={exportToPDF} disabled={isLoading}>
-                <Download className="h-4 w-4 mr-2" />
-                Export
-              </Button>
             </CardTitle>
           </CardHeader>
           <CardContent>

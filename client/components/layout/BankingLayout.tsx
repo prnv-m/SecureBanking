@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
+import { NotificationBell } from "@/components/NotificationBell";
 import {
   User,
   Home,
@@ -87,13 +88,7 @@ export function BankingLayout({ children }: BankingLayoutProps) {
                 />
               </div>
 
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-white hover:bg-white/10"
-              >
-                <Bell className="h-5 w-5" />
-              </Button>
+              <NotificationBell />
 
               <div className="flex items-center text-white">
                 <User className="h-8 w-8 bg-white/20 rounded-full p-1 mr-2" />
@@ -150,16 +145,48 @@ export function BankingLayout({ children }: BankingLayoutProps) {
                 Quick Links
               </h3>
               <div className="grid grid-cols-2 gap-2">
-                <Button variant="outline" size="sm" className="text-xs">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="text-xs"
+                  onClick={() => {
+                    navigate('/transfers');
+                    setSidebarOpen(false);
+                  }}
+                >
                   Fund Transfer
                 </Button>
-                <Button variant="outline" size="sm" className="text-xs">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="text-xs"
+                  onClick={() => {
+                    navigate('/fixed-deposits');
+                    setSidebarOpen(false);
+                  }}
+                >
                   New FD
                 </Button>
-                <Button variant="outline" size="sm" className="text-xs">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="text-xs"
+                  onClick={() => {
+                    navigate('/investments');
+                    setSidebarOpen(false);
+                  }}
+                >
                   Buy Stocks
                 </Button>
-                <Button variant="outline" size="sm" className="text-xs">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="text-xs"
+                  onClick={() => {
+                    navigate('/');
+                    setSidebarOpen(false);
+                  }}
+                >
                   Portfolio
                 </Button>
               </div>

@@ -95,7 +95,7 @@ def train_model_on_startup():
     
     # --- Configuration ---
     CSV_FILE = 'collected_keystroke_data.csv'
-    ENROLLED_USER = 'Pranav' # We will build the model for this user
+    ENROLLED_USER = 'Priyankaa' # We will build the model for this user
     
     print(f"--- Server is starting: Loading data and training model for user '{ENROLLED_USER}' ---")
     
@@ -164,7 +164,19 @@ def init_db():
             FOREIGN KEY (user_email) REFERENCES users (email)
         )
     ''')
-    
+    # Billers table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS billers (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        provider_name TEXT NOT NULL, -- e.g., 'KSEB', 'Airtel'
+        category TEXT NOT NULL, -- e.g., 'Electricity Bill', 'Mobile Recharge'
+        consumer_id TEXT NOT NULL, -- The user's specific account/phone number
+        nickname TEXT, -- e.g., 'Home Electricity', 'My Jio Number'
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users (id)
+    )
+    ''')
     # Stocks table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS stocks (
@@ -215,7 +227,23 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
     ''')
-    
+# In init_db() in app.py
+
+# ... after the other CREATE TABLE statements ...
+
+# AutoPay Rules table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS autopay_rules (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            biller_id TEXT NOT NULL,
+            max_amount REAL NOT NULL,
+            enabled INTEGER DEFAULT 1, -- 1 for true, 0 for false
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (biller_id) REFERENCES billers (id) ON DELETE CASCADE
+        )
+    ''')
     # Fixed Deposits table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS fixed_deposits (
@@ -247,6 +275,39 @@ def init_db():
             account_type TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    ''')
+    
+    # Tax payments table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS tax_payments (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            transaction_id TEXT NOT NULL,
+            tax_type TEXT NOT NULL, -- 'DIRECT', 'GST', 'STATE'
+            -- Direct tax fields
+            pan_tan TEXT,
+            assessment_year TEXT,
+            tax_applicable TEXT,
+            payment_type TEXT,
+            -- GST fields
+            gstin TEXT,
+            cpin TEXT,
+            cgst REAL DEFAULT 0,
+            sgst REAL DEFAULT 0,
+            igst REAL DEFAULT 0,
+            cess REAL DEFAULT 0,
+            -- State tax fields
+            state TEXT,
+            municipality TEXT,
+            service_type TEXT,
+            consumer_id TEXT,
+            -- Common fields
+            amount REAL NOT NULL,
+            status TEXT DEFAULT 'PENDING',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (transaction_id) REFERENCES transactions (id)
         )
     ''')
     
@@ -670,6 +731,77 @@ def biometric_login():
         logging.error(f"General biometric login error: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
     
+@app.route('/api/billers/<string:biller_id>', methods=['DELETE'])
+@jwt_required()
+def delete_biller(biller_id):
+    user_id = get_jwt_identity()
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM billers WHERE id = ? AND user_id = ?", (biller_id, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'message': 'Biller deleted successfully.'})
+
+@app.route('/api/autopay-rules', methods=['GET'])
+@jwt_required()
+def get_autopay_rules():
+    user_id = get_jwt_identity()
+    conn = get_db()
+    cursor = conn.cursor()
+    # Join with billers to get details like nickname and provider
+    cursor.execute('''
+        SELECT ar.*, b.nickname, b.provider_name, b.consumer_id
+        FROM autopay_rules ar
+        JOIN billers b ON ar.biller_id = b.id
+        WHERE ar.user_id = ?
+    ''', (user_id,))
+    rules = cursor.fetchall()
+    conn.close()
+    return jsonify({'success': True, 'rules': [dict(row) for row in rules]})
+
+@app.route('/api/autopay-rules', methods=['POST'])
+@jwt_required()
+def add_autopay_rule():
+    user_id = get_jwt_identity()
+    data = request.get_json()
+    if 'biller_id' not in data or 'max_amount' not in data:
+        return jsonify({'success': False, 'error': 'Biller ID and max amount required'}), 400
+
+    rule_id = str(uuid.uuid4())
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO autopay_rules (id, user_id, biller_id, max_amount) VALUES (?, ?, ?, ?)",
+                   (rule_id, user_id, data['biller_id'], float(data['max_amount'])))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'message': 'Auto-Pay rule added.'})
+
+@app.route('/api/autopay-rules/<string:rule_id>', methods=['PUT'])
+@jwt_required()
+def toggle_autopay_rule(rule_id):
+    user_id = get_jwt_identity()
+    data = request.get_json()
+    if 'enabled' not in data:
+        return jsonify({'success': False, 'error': 'Enabled status required'}), 400
+        
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE autopay_rules SET enabled = ? WHERE id = ? AND user_id = ?", 
+                   (1 if data['enabled'] else 0, rule_id, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'message': 'Rule status updated.'})
+
+@app.route('/api/autopay-rules/<string:rule_id>', methods=['DELETE'])
+@jwt_required()
+def delete_autopay_rule(rule_id):
+    user_id = get_jwt_identity()
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM autopay_rules WHERE id = ? AND user_id = ?", (rule_id, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'message': 'Auto-Pay rule deleted.'})
 # Authentication routes
 @app.before_request
 def handle_preflight():
@@ -801,6 +933,415 @@ def login():
         
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/billers', methods=['GET'])
+@jwt_required()
+def get_registered_billers():
+    user_id = get_jwt_identity()
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM billers WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
+    billers = cursor.fetchall()
+    conn.close()
+    return jsonify({
+        'success': True,
+        'billers': [dict(row) for row in billers]
+    })
+
+
+@app.route('/api/billers', methods=['POST'])
+@jwt_required()
+def add_biller():
+    user_id = get_jwt_identity()
+    data = request.get_json()
+    
+    required_fields = ['provider_name', 'category', 'consumer_id', 'nickname']
+    if not all(field in data for field in required_fields):
+        return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+
+    biller_id = str(uuid.uuid4())
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO billers (id, user_id, provider_name, category, consumer_id, nickname)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (biller_id, user_id, data['provider_name'], data['category'], data['consumer_id'], data['nickname']))
+    conn.commit()
+    
+    cursor.execute("SELECT * FROM billers WHERE id = ?", (biller_id,))
+    new_biller = cursor.fetchone()
+    conn.close()
+    
+    return jsonify({
+        'success': True,
+        'message': 'Biller added successfully!',
+        'biller': dict(new_biller)
+    }), 201
+
+
+@app.route('/api/billers/pay', methods=['POST'])
+@jwt_required()
+def pay_bill():
+    user_id = get_jwt_identity()
+    data = request.get_json()
+
+    if not data or 'biller_id' not in data or 'amount' not in data:
+        return jsonify({'success': False, 'error': 'Biller ID and amount are required'}), 400
+
+    biller_id = data['biller_id']
+    amount = float(data['amount'])
+
+    if amount <= 0:
+        return jsonify({'success': False, 'error': 'Amount must be positive'}), 400
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Get user and biller details in one go
+    cursor.execute("SELECT balance, email FROM users WHERE id = ?", (user_id,))
+    user = cursor.fetchone()
+    cursor.execute("SELECT * FROM billers WHERE id = ? AND user_id = ?", (biller_id, user_id))
+    biller = cursor.fetchone()
+
+    if not biller:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Biller not found or does not belong to user'}), 404
+
+    if user['balance'] < amount:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Insufficient balance'}), 400
+
+    # 1. Create the transaction record
+    transaction_id = str(uuid.uuid4())
+    description = f"Bill payment for {biller['nickname']} ({biller['provider_name']})"
+    cursor.execute('''
+        INSERT INTO transactions (id, user_id, type, amount, description, status, completed_at, counterparty)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+    ''', (transaction_id, user_id, 'BILL_PAYMENT', amount, description, 'COMPLETED', biller['provider_name']))
+
+    # 2. Deduct amount from user's balance
+    cursor.execute("UPDATE users SET balance = balance - ? WHERE id = ?", (amount, user_id))
+    
+    conn.commit()
+    conn.close()
+
+    # Track the event
+    track_user_event(user['email'], 'bill_payment', '/bills', amount, 'BILL_PAYMENT', json.dumps({'biller_id': biller_id}))
+    
+    return jsonify({
+        'success': True,
+        'message': f'Successfully paid ₹{amount:,.2f} for {biller["nickname"]}.'
+    })
+
+
+@app.route('/api/recharge', methods=['POST'])
+@jwt_required()
+def process_recharge():
+    user_id = get_jwt_identity()
+    data = request.get_json()
+
+    required_fields = ['provider', 'mobile_number', 'amount', 'plan_type']
+    if not all(field in data for field in required_fields):
+        return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+
+    provider = data['provider']
+    mobile_number = data['mobile_number']
+    amount = float(data['amount'])
+    plan_type = data['plan_type']  # 'prepaid' or 'postpaid'
+
+    if amount <= 0:
+        return jsonify({'success': False, 'error': 'Amount must be positive'}), 400
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Get user details
+    cursor.execute("SELECT balance, email FROM users WHERE id = ?", (user_id,))
+    user = cursor.fetchone()
+
+    if user['balance'] < amount:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Insufficient balance'}), 400
+
+    # Create recharge transaction
+    transaction_id = str(uuid.uuid4())
+    description = f"{plan_type.title()} Recharge - {provider} ({mobile_number})"
+    
+    cursor.execute('''
+        INSERT INTO transactions (id, user_id, type, amount, description, status, completed_at, counterparty, reference)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
+    ''', (transaction_id, user_id, 'RECHARGE', amount, description, 'COMPLETED', provider, mobile_number))
+
+    # Deduct amount from user's balance
+    cursor.execute("UPDATE users SET balance = balance - ? WHERE id = ?", (amount, user_id))
+    
+    conn.commit()
+    conn.close()
+
+    # Track the event
+    track_user_event(user['email'], 'recharge', '/recharge', amount, 'RECHARGE', 
+                    json.dumps({'provider': provider, 'mobile_number': mobile_number, 'plan_type': plan_type}))
+    
+    return jsonify({
+        'success': True,
+        'message': f'Successfully recharged {mobile_number} with ₹{amount:,.2f}.',
+        'transaction_id': transaction_id
+    })
+
+
+# Beneficiaries Management Endpoints
+@app.route('/api/beneficiaries', methods=['GET'])
+@jwt_required()
+def get_beneficiaries():
+    user_id = get_jwt_identity()
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM beneficiaries WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
+    beneficiaries = cursor.fetchall()
+    conn.close()
+    
+    # Map database fields to frontend expected fields
+    formatted_beneficiaries = []
+    for row in beneficiaries:
+        beneficiary = dict(row)
+        formatted_beneficiaries.append({
+            'id': beneficiary['id'],
+            'user_id': beneficiary['user_id'],
+            'account_number': beneficiary['account_number'],
+            'account_holder_name': beneficiary['name'],  # Map DB field to frontend field
+            'ifsc_code': beneficiary['ifsc_code'],
+            'bank_name': beneficiary['bank_name'],
+            'nickname': beneficiary['name'],  # Use name as nickname for now
+            'is_within_securebank': 1 if beneficiary['bank_name'] == 'SecureBank' else 0,
+            'created_at': beneficiary['created_at']
+        })
+    
+    return jsonify({
+        'success': True,
+        'beneficiaries': formatted_beneficiaries
+    })
+
+
+@app.route('/api/beneficiaries', methods=['POST'])
+@jwt_required()
+def add_beneficiary():
+    user_id = get_jwt_identity()
+    data = request.get_json()
+    
+    required_fields = ['account_holder_name', 'account_number', 'nickname']
+    if not all(field in data for field in required_fields):
+        return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+    
+    # Map frontend field to database field
+    name = data['account_holder_name']
+
+    beneficiary_id = str(uuid.uuid4())
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Check if beneficiary already exists
+    cursor.execute("SELECT id FROM beneficiaries WHERE user_id = ? AND account_number = ?", 
+                   (user_id, data['account_number']))
+    if cursor.fetchone():
+        conn.close()
+        return jsonify({'success': False, 'error': 'Beneficiary with this account number already exists'}), 400
+    
+    # Set defaults for optional fields
+    ifsc_code = data.get('ifsc_code', 'SECB0000001')
+    bank_name = data.get('bank_name', 'SecureBank')
+    account_type = 'SAVINGS'  # Default account type
+    
+    cursor.execute('''
+        INSERT INTO beneficiaries (id, user_id, name, account_number, ifsc_code, bank_name, account_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (beneficiary_id, user_id, name, data['account_number'], 
+          ifsc_code, bank_name, account_type))
+    
+    conn.commit()
+    
+    # Return the created beneficiary
+    cursor.execute("SELECT * FROM beneficiaries WHERE id = ?", (beneficiary_id,))
+    beneficiary = cursor.fetchone()
+    conn.close()
+    
+    return jsonify({
+        'success': True,
+        'message': 'Beneficiary added successfully!',
+        'beneficiary': {
+            'id': beneficiary['id'],
+            'user_id': beneficiary['user_id'],
+            'account_number': beneficiary['account_number'],
+            'account_holder_name': beneficiary['name'],  # Map DB field to frontend field
+            'ifsc_code': beneficiary['ifsc_code'],
+            'bank_name': beneficiary['bank_name'],
+            'nickname': data['nickname'],  # Use from request since not stored in DB
+            'is_within_securebank': 1 if bank_name == 'SecureBank' else 0,
+            'created_at': beneficiary['created_at']
+        }
+    }), 201
+
+
+@app.route('/api/beneficiaries/<string:beneficiary_id>', methods=['DELETE'])
+@jwt_required()
+def delete_beneficiary(beneficiary_id):
+    user_id = get_jwt_identity()
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM beneficiaries WHERE id = ? AND user_id = ?", (beneficiary_id, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'message': 'Beneficiary deleted successfully.'})
+
+
+# Transfer Endpoints
+@app.route('/api/transfers/own-account', methods=['POST'])
+@jwt_required()
+def transfer_own_account():
+    """Add money to own account for testing purposes"""
+    user_id = get_jwt_identity()
+    data = request.get_json()
+
+    if not data or 'amount' not in data:
+        return jsonify({'success': False, 'error': 'Amount is required'}), 400
+
+    amount = float(data['amount'])
+    if amount <= 0:
+        return jsonify({'success': False, 'error': 'Amount must be positive'}), 400
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Get user details
+    cursor.execute("SELECT email FROM users WHERE id = ?", (user_id,))
+    user = cursor.fetchone()
+
+    # Create transaction record
+    transaction_id = str(uuid.uuid4())
+    description = f"Fund transfer to own account - Testing credit"
+    
+    cursor.execute('''
+        INSERT INTO transactions (id, user_id, type, amount, description, status, completed_at, counterparty)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+    ''', (transaction_id, user_id, 'TRANSFER_IN', amount, description, 'COMPLETED', 'Own Account'))
+
+    # Add amount to user's balance
+    cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount, user_id))
+    
+    conn.commit()
+    conn.close()
+
+    # Track the event
+    track_user_event(user['email'], 'own_account_transfer', '/transfers', amount, 'TRANSFER_IN', 
+                    json.dumps({'amount': amount}))
+    
+    return jsonify({
+        'success': True,
+        'message': f'Successfully added ₹{amount:,.2f} to your account.',
+        'transaction_id': transaction_id
+    })
+
+
+@app.route('/api/transfers/to-beneficiary', methods=['POST'])
+@jwt_required()
+def transfer_to_beneficiary():
+    """Transfer money to a registered beneficiary"""
+    user_id = get_jwt_identity()
+    data = request.get_json()
+
+    required_fields = ['beneficiary_id', 'amount']
+    if not all(field in data for field in required_fields):
+        return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+
+    beneficiary_id = data['beneficiary_id']
+    amount = float(data['amount'])
+    transfer_type = 'IMPS'  # Default transfer type
+    remarks = data.get('remarks', '')
+
+    if amount <= 0:
+        return jsonify({'success': False, 'error': 'Amount must be positive'}), 400
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Get user and beneficiary details
+    cursor.execute("SELECT balance, email FROM users WHERE id = ?", (user_id,))
+    user = cursor.fetchone()
+    cursor.execute("SELECT * FROM beneficiaries WHERE id = ? AND user_id = ?", (beneficiary_id, user_id))
+    beneficiary = cursor.fetchone()
+
+    if not beneficiary:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Beneficiary not found'}), 404
+
+    if user['balance'] < amount:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Insufficient balance'}), 400
+
+    # Create transaction record
+    transaction_id = str(uuid.uuid4())
+    description = f"{transfer_type} transfer to {beneficiary['name']} ({beneficiary['account_number'][-4:]})"
+    
+    cursor.execute('''
+        INSERT INTO transactions (id, user_id, type, amount, description, status, completed_at, counterparty, reference)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
+    ''', (transaction_id, user_id, 'TRANSFER_OUT', -amount, description, 'COMPLETED', 
+          beneficiary['name'], remarks))
+
+    # Deduct amount from user's balance
+    cursor.execute("UPDATE users SET balance = balance - ? WHERE id = ?", (amount, user_id))
+    
+    conn.commit()
+    conn.close()
+
+    # Track the event
+    track_user_event(user['email'], 'beneficiary_transfer', '/transfers', amount, 'TRANSFER_OUT', 
+                    json.dumps({'beneficiary_id': beneficiary_id, 'transfer_type': transfer_type}))
+    
+    return jsonify({
+        'success': True,
+        'message': f'Successfully transferred ₹{amount:,.2f} to {beneficiary["name"]}.',
+        'transaction_id': transaction_id
+    })
+
+
+@app.route('/api/transfers/recent', methods=['GET'])
+@jwt_required()
+def get_recent_transfers():
+    """Get recent transfer transactions"""
+    user_id = get_jwt_identity()
+    limit = int(request.args.get('limit', 10))
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT * FROM transactions 
+        WHERE user_id = ? AND type IN ('TRANSFER_IN', 'TRANSFER_OUT')
+        ORDER BY created_at DESC 
+        LIMIT ?
+    ''', (user_id, limit))
+    transfers = cursor.fetchall()
+    
+    conn.close()
+    
+    return jsonify({
+        'success': True,
+        'transfers': [
+            {
+                'id': row['id'],
+                'type': row['type'],
+                'amount': row['amount'],
+                'description': row['description'],
+                'status': row['status'],
+                'created_at': row['created_at'],
+                'counterparty': row['counterparty'],
+                'reference': row['reference']
+            }
+            for row in transfers
+        ]
+    })
+
 
 @app.route('/api/auth/profile', methods=['GET', 'OPTIONS'])
 @jwt_required()
@@ -1894,6 +2435,358 @@ def export_account_statement():
         
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+# ========== TAX PAYMENT ENDPOINTS ==========
+
+@app.route('/api/tax/direct', methods=['POST'])
+@jwt_required()
+def pay_direct_tax():
+    """Pay direct tax (Income Tax, TDS, etc.)"""
+    user_id = get_jwt_identity()
+    data = request.get_json()
+    
+    required_fields = ['pan', 'assessmentYear', 'taxType', 'paymentType', 'amount']
+    if not all(field in data for field in required_fields):
+        return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+        
+    amount = float(data['amount'])
+    if amount <= 0:
+        return jsonify({'success': False, 'error': 'Amount must be greater than 0'}), 400
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Check user balance
+    cursor.execute("SELECT balance FROM users WHERE id = ?", (user_id,))
+    user = cursor.fetchone()
+    if not user or user['balance'] < amount:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Insufficient balance'}), 400
+    
+    try:
+        # Create transaction
+        transaction_id = str(uuid.uuid4())
+        cursor.execute('''
+            INSERT INTO transactions (id, user_id, type, amount, description, status, completed_at, counterparty, reference)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
+        ''', (
+            transaction_id, user_id, 'TAX_DIRECT', -amount, 
+            f"Direct Tax Payment - PAN: {data['pan']}", 'COMPLETED',
+            'Income Tax Department', data['pan']
+        ))
+        
+        # Update user balance
+        cursor.execute("UPDATE users SET balance = balance - ? WHERE id = ?", (amount, user_id))
+        
+        # Create tax payment record
+        tax_payment_id = str(uuid.uuid4())
+        cursor.execute('''
+            INSERT INTO tax_payments (id, user_id, transaction_id, tax_type, pan_tan, assessment_year, 
+                                    tax_applicable, payment_type, amount, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ''', (
+            tax_payment_id, user_id, transaction_id, 'DIRECT', data['pan'], 
+            data['assessmentYear'], data['taxType'], data['paymentType'], amount, 'COMPLETED'
+        ))
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Direct tax payment successful',
+            'transaction_id': transaction_id,
+            'tax_payment_id': tax_payment_id
+        })
+        
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/tax/gst', methods=['POST'])
+@jwt_required()
+def pay_gst():
+    """Pay GST"""
+    user_id = get_jwt_identity()
+    data = request.get_json()
+    
+    required_fields = ['gstin', 'cpin', 'amount']
+    if not all(field in data for field in required_fields):
+        return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+        
+    amount = float(data['amount'])
+    if amount <= 0:
+        return jsonify({'success': False, 'error': 'Amount must be greater than 0'}), 400
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Check user balance
+    cursor.execute("SELECT balance FROM users WHERE id = ?", (user_id,))
+    user = cursor.fetchone()
+    if not user or user['balance'] < amount:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Insufficient balance'}), 400
+    
+    try:
+        # Create transaction
+        transaction_id = str(uuid.uuid4())
+        cursor.execute('''
+            INSERT INTO transactions (id, user_id, type, amount, description, status, completed_at, counterparty, reference)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
+        ''', (
+            transaction_id, user_id, 'TAX_GST', -amount, 
+            f"GST Payment - GSTIN: {data['gstin']}", 'COMPLETED',
+            'GST Department', data['gstin']
+        ))
+        
+        # Update user balance
+        cursor.execute("UPDATE users SET balance = balance - ? WHERE id = ?", (amount, user_id))
+        
+        # Create tax payment record
+        tax_payment_id = str(uuid.uuid4())
+        cursor.execute('''
+            INSERT INTO tax_payments (id, user_id, transaction_id, tax_type, gstin, cpin, 
+                                    cgst, sgst, igst, cess, amount, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ''', (
+            tax_payment_id, user_id, transaction_id, 'GST', data['gstin'], data['cpin'],
+            data.get('cgst', 0), data.get('sgst', 0), data.get('igst', 0), data.get('cess', 0),
+            amount, 'COMPLETED'
+        ))
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'message': 'GST payment successful',
+            'transaction_id': transaction_id,
+            'tax_payment_id': tax_payment_id
+        })
+        
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/tax/state', methods=['POST'])
+@jwt_required()
+def pay_state_tax():
+    """Pay state tax"""
+    user_id = get_jwt_identity()
+    data = request.get_json()
+    
+    required_fields = ['state', 'municipality', 'service', 'consumerId', 'amount']
+    if not all(field in data for field in required_fields):
+        return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+        
+    amount = float(data['amount'])
+    if amount <= 0:
+        return jsonify({'success': False, 'error': 'Amount must be greater than 0'}), 400
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Check user balance
+    cursor.execute("SELECT balance FROM users WHERE id = ?", (user_id,))
+    user = cursor.fetchone()
+    if not user or user['balance'] < amount:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Insufficient balance'}), 400
+    
+    try:
+        # Create transaction
+        transaction_id = str(uuid.uuid4())
+        cursor.execute('''
+            INSERT INTO transactions (id, user_id, type, amount, description, status, completed_at, counterparty, reference)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
+        ''', (
+            transaction_id, user_id, 'TAX_STATE', -amount, 
+            f"{data['service']} - {data['state']}", 'COMPLETED',
+            f"{data['municipality']}", data['consumerId']
+        ))
+        
+        # Update user balance
+        cursor.execute("UPDATE users SET balance = balance - ? WHERE id = ?", (amount, user_id))
+        
+        # Create tax payment record
+        tax_payment_id = str(uuid.uuid4())
+        cursor.execute('''
+            INSERT INTO tax_payments (id, user_id, transaction_id, tax_type, state, municipality, 
+                                    service_type, consumer_id, amount, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ''', (
+            tax_payment_id, user_id, transaction_id, 'STATE', data['state'], 
+            data['municipality'], data['service'], data['consumerId'], amount, 'COMPLETED'
+        ))
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'message': 'State tax payment successful',
+            'transaction_id': transaction_id,
+            'tax_payment_id': tax_payment_id
+        })
+        
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/tax/history', methods=['GET'])
+@jwt_required()
+def get_tax_history():
+    """Get tax payment history"""
+    user_id = get_jwt_identity()
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT tp.*, t.created_at as payment_date, t.description, t.counterparty
+        FROM tax_payments tp
+        JOIN transactions t ON tp.transaction_id = t.id
+        WHERE tp.user_id = ?
+        ORDER BY tp.created_at DESC
+    ''', (user_id,))
+    
+    tax_payments = cursor.fetchall()
+    conn.close()
+    
+    return jsonify({
+        'success': True,
+        'tax_payments': [dict(row) for row in tax_payments]
+    })
+
+@app.route('/api/tax/download-challan/<string:tax_payment_id>', methods=['GET'])
+@jwt_required()
+def download_challan(tax_payment_id):
+    """Generate and download tax payment challan"""
+    user_id = get_jwt_identity()
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Get tax payment details with user info
+    cursor.execute('''
+        SELECT tp.*, t.created_at as payment_date, t.description, t.counterparty, t.reference,
+               u.first_name, u.last_name, u.email, u.phone, u.account_number
+        FROM tax_payments tp
+        JOIN transactions t ON tp.transaction_id = t.id
+        JOIN users u ON tp.user_id = u.id
+        WHERE tp.id = ? AND tp.user_id = ?
+    ''', (tax_payment_id, user_id))
+    
+    payment = cursor.fetchone()
+    conn.close()
+    
+    if not payment:
+        return jsonify({'success': False, 'error': 'Tax payment not found'}), 404
+    
+    # Generate challan data
+    challan_data = {
+        'challan_number': f"CH{payment['id'][:8].upper()}",
+        'payment_date': payment['payment_date'],
+        'tax_type': payment['tax_type'],
+        'amount': payment['amount'],
+        'status': payment['status'],
+        'transaction_id': payment['transaction_id'],
+        'user_details': {
+            'name': f"{payment['first_name']} {payment['last_name']}",
+            'email': payment['email'],
+            'phone': payment['phone'],
+            'account_number': payment['account_number']
+        }
+    }
+    
+    # Add tax-specific details
+    if payment['tax_type'] == 'DIRECT':
+        challan_data['tax_details'] = {
+            'pan': payment['pan_tan'],
+            'assessment_year': payment['assessment_year'],
+            'tax_applicable': payment['tax_applicable'],
+            'payment_type': payment['payment_type']
+        }
+    elif payment['tax_type'] == 'GST':
+        challan_data['tax_details'] = {
+            'gstin': payment['gstin'],
+            'cpin': payment['cpin'],
+            'cgst': payment['cgst'] or 0,
+            'sgst': payment['sgst'] or 0,
+            'igst': payment['igst'] or 0,
+            'cess': payment['cess'] or 0
+        }
+    elif payment['tax_type'] == 'STATE':
+        challan_data['tax_details'] = {
+            'state': payment['state'],
+            'municipality': payment['municipality'],
+            'service_type': payment['service_type'],
+            'consumer_id': payment['consumer_id']
+        }
+    
+    return jsonify({
+        'success': True,
+        'challan': challan_data
+    })
+
+@app.route('/api/tax/export-history', methods=['GET'])
+@jwt_required()
+def export_tax_history():
+    """Export complete tax payment history"""
+    user_id = get_jwt_identity()
+    export_format = request.args.get('format', 'json').lower()
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Get user details
+    cursor.execute("SELECT first_name, last_name, email, account_number FROM users WHERE id = ?", (user_id,))
+    user = cursor.fetchone()
+    
+    # Get all tax payments
+    cursor.execute('''
+        SELECT tp.*, t.created_at as payment_date, t.description, t.counterparty
+        FROM tax_payments tp
+        JOIN transactions t ON tp.transaction_id = t.id
+        WHERE tp.user_id = ?
+        ORDER BY tp.created_at DESC
+    ''', (user_id,))
+    
+    tax_payments = cursor.fetchall()
+    conn.close()
+    
+    export_data = {
+        'export_date': datetime.now().isoformat(),
+        'user_details': {
+            'name': f"{user['first_name']} {user['last_name']}",
+            'email': user['email'],
+            'account_number': user['account_number']
+        },
+        'total_payments': len(tax_payments),
+        'total_amount': sum(float(p['amount']) for p in tax_payments),
+        'payments': [
+            {
+                'challan_number': f"CH{p['id'][:8].upper()}",
+                'payment_date': p['payment_date'],
+                'tax_type': p['tax_type'],
+                'description': p['description'],
+                'amount': p['amount'],
+                'status': p['status'],
+                'transaction_id': p['transaction_id']
+            }
+            for p in tax_payments
+        ]
+    }
+    
+    return jsonify({
+        'success': True,
+        'message': f'Tax history exported successfully in {export_format.upper()} format',
+        'exportData': export_data
+    })
 
 # Start background task for stock price updates
 def start_background_tasks():

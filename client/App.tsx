@@ -6,6 +6,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { NotificationProvider } from "@/contexts/NotificationContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
@@ -22,8 +23,9 @@ import StockInvestments from "./pages/StockInvestments";
 const App = () => (
   <TooltipProvider>
     <AuthProvider>
-      <Toaster />
-      <Sonner />
+      <NotificationProvider>
+        <Toaster />
+        <Sonner />
       <BrowserRouter>
         <Routes>
             {/* Public routes */}
@@ -100,8 +102,9 @@ const App = () => (
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
-      </AuthProvider>
-    </TooltipProvider>
+      </NotificationProvider>
+    </AuthProvider>
+  </TooltipProvider>
 );
 
 createRoot(document.getElementById("root")!).render(<App />);
