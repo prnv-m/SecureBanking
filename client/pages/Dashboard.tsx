@@ -53,6 +53,20 @@ export interface FixedDeposit {
   maturityAmount: number;
 }
 
+// Define the interface for a Fixed Deposit based on your API response
+export interface FixedDeposit {
+  id: string;
+  amount: number;
+  interestRate: number;
+  tenure: number;
+  startDate: string;
+  maturityDate: string;
+  type: string;
+  status: string;
+  interestEarned: number;
+  maturityAmount: number;
+}
+
 export function Dashboard() {
   const [showBalance, setShowBalance] = useState(true);
   const [portfolio, setPortfolio] = useState<Portfolio[]>([]);
@@ -67,7 +81,10 @@ export function Dashboard() {
     [],
   );
   const [fixedDeposits, setFixedDeposits] = useState<FixedDeposit[]>([]);
+<<<<<<< HEAD
   const [transferHistory, setTransferHistory] = useState<any[]>([]);
+=======
+>>>>>>> 398bc9b4c0489298716b4bcb57ff82a97247a1e6
   const [isLoading, setIsLoading] = useState(true);
 
   const { user } = useAuth();
@@ -78,10 +95,14 @@ export function Dashboard() {
       try {
         setIsLoading(true);
 
+<<<<<<< HEAD
         const [profileData, transfersData] = await Promise.all([
           userApi.getProfile(),
           transfersApi.getRecentTransfers()
         ]);
+=======
+        const profileData = await userApi.getProfile();
+>>>>>>> 398bc9b4c0489298716b4bcb57ff82a97247a1e6
 
         if (profileData.success) {
           setPortfolio(profileData.portfolio || []);
@@ -96,6 +117,7 @@ export function Dashboard() {
           );
           setRecentTransactions(profileData.recentTransactions || []);
           setFixedDeposits(profileData.fixedDeposits || []);
+<<<<<<< HEAD
         }
 
         if (transfersData.success) {
@@ -103,6 +125,8 @@ export function Dashboard() {
         } else {
           console.warn('Failed to load transfer data:', transfersData);
           setTransferHistory([]);
+=======
+>>>>>>> 398bc9b4c0489298716b4bcb57ff82a97247a1e6
         }
       } catch (error) {
         console.error("Error fetching dashboard data:", error);
@@ -118,6 +142,7 @@ export function Dashboard() {
     }
   }, [user]);
 
+<<<<<<< HEAD
   // Process transfer data to separate inbound and outbound (with safety check)
   const safeTransferHistory = Array.isArray(transferHistory) ? transferHistory : [];
   const outboundTransfers = safeTransferHistory
@@ -185,6 +210,32 @@ export function Dashboard() {
         purpose: transfer.reference || transfer.description || 'Transfer',
       };
     });
+=======
+  // --- Dummy Data ---
+  const outboundTransfers = [
+    {
+      id: "TXN240115001",
+      recipientName: "Ravi Kumar",
+      amount: 25000,
+      date: "2024-01-15",
+      time: "14:32",
+      method: "IMPS",
+      reference: "Gift for wedding",
+    },
+  ];
+
+  const inboundTransfers = [
+    {
+      id: "RXN240115001",
+      senderName: "TechCorp Solutions Pvt Ltd",
+      amount: 85000,
+      date: "2024-01-15",
+      time: "09:30",
+      method: "RTGS",
+      purpose: "Salary",
+    },
+  ];
+>>>>>>> 398bc9b4c0489298716b4bcb57ff82a97247a1e6
 
   const quickServices = [
     { name: "New Fixed Deposit", icon: PiggyBank, color: "text-green-600", href: "/fixed-deposits" },
@@ -585,6 +636,25 @@ export function Dashboard() {
         </CardContent>
       </Card>
 
+<<<<<<< HEAD
+=======
+      {/* Detailed Transaction History */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="text-lg font-semibold">
+            Recent Transaction Details
+          </CardTitle>
+          <Button variant="outline" size="sm">
+            <Download className="h-4 w-4 mr-2" />
+            Export
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {/* This part still uses dummy data, but you can replace it using recentTransactions state */}
+          <p className="text-center text-gray-500 py-4">Transaction history section can be updated similarly.</p>
+        </CardContent>
+      </Card>
+>>>>>>> 398bc9b4c0489298716b4bcb57ff82a97247a1e6
     </div>
   );
 }
