@@ -46,3 +46,12 @@ curl -X POST --data-binary @test.wav -H "Content-Type: audio/wav" http://localho
 npm install
 npm run dev
 ```
+
+### 7. Sample screenshots
+#### Basic Banking app screenshots
+<img width="1907" height="951" alt="image" src="https://github.com/user-attachments/assets/26328ff3-af6e-499d-8d98-f034ac0b3879" />
+
+#### Anomaly Detection
+<img width="1917" height="968" alt="image" src="https://github.com/user-attachments/assets/427cf2f8-ae29-46dd-aaaf-d9f8df183d1f" />
+<img width="1918" height="897" alt="image" src="https://github.com/user-attachments/assets/77c802f7-f74f-44cb-9a27-aee8e6d1fe89" />
+
