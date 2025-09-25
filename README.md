@@ -1,6 +1,6 @@
-# SecureBanking
+# SecureBank
 
-SecureBanking is a simple prototype banking platform that uses:
+SecureBank is a simple prototype banking platform that uses:
 - **Keystroke authentication** (based on typing patterns)
 - **Forest-based decision tree models** for anomaly detection
 - **Zero Trust** security checks
@@ -25,7 +25,7 @@ No separate database server is needed — it just stores data in a file.
 
 In `.env` file, set:
 ```
-DATABASE_URL=sqlite:///securebanking.db
+DATABASE_URL=sqlite:///SecureBank.db
 ```
 ## 3. Kaldi + Vosk Server Setup
 
